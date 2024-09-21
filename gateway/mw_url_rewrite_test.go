@@ -8,7 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TykTechnologies/tyk/config"
 	"github.com/TykTechnologies/tyk/ctx"
+	"github.com/TykTechnologies/tyk/storage/kv"
 
 	"github.com/TykTechnologies/tyk/test"
 
@@ -127,6 +129,7 @@ func TestRewriter(t *testing.T) {
 		})
 	}
 }
+
 func BenchmarkRewriter(b *testing.B) {
 	ts := StartTest(nil)
 	defer ts.Close()
@@ -1381,6 +1384,67 @@ func TestURLRewriteMiddleware_CheckHostRewrite(t *testing.T) {
 			err := m.CheckHostRewrite(tt.args.oldPath, tt.args.newTarget, r)
 			assert.Equal(t, tt.errExpected, err != nil)
 			assert.Equal(t, tt.retainHostVal, r.Context().Value(ctx.RetainHost))
+		})
+	}
+}
+
+// Replace Secrets Tests
+// =====================
+// [-] Auth key signature secret
+// [-] Persist GraphQL variable
+// [-] Rate limit pattern
+// [x] Request body
+// [x] Request headers global header value
+// [x] Request headers path header value
+// [x] Response headers global header value
+// [x] Response headers path header value
+// [-] URL rewrite
+
+func TestURLRewriteReplaceSecrets(t *testing.T) {
+	ts := StartTest(func(conf *config.Config) {
+		conf.Secrets = map[string]string{
+			"url_rewrite": "/conf/url_rewrite/value",
+		}
+	})
+	defer ts.Close()
+
+	t.Setenv("TYK_SECRET_URL_REWRITE", "/env/url_rewrite/value")
+
+	ts.Gw.secretsManagerKVStore = kv.NewSecretsManagerWithClient(kv.NewDummySecretsManagerClient(map[string]string{
+		"url_rewrite": "/secretsmanager/url_rewrite/value",
+	}))
+
+	tests := []struct {
+		name   string
+		scheme string
+	}{
+		{name: "Config", scheme: "conf"},
+		{name: "Env", scheme: "env"},
+		{name: "SecretsManager", scheme: "secretsmanager"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts.Gw.BuildAndLoadAPI(func(spec *APISpec) {
+				spec.Proxy.ListenPath = "/"
+				UpdateAPIVersion(spec, "v1", func(v *apidef.VersionInfo) {
+					v.UseExtendedPaths = true
+					v.ExtendedPaths.URLRewrite = []apidef.URLRewriteMeta{{
+						MatchPattern: "/",
+						Method:       http.MethodGet,
+						Path:         "/",
+						RewriteTo:    "$secret_" + tt.scheme + ".url_rewrite",
+					}}
+				})
+			})
+
+			_, err := ts.Run(t, test.TestCase{
+				Method:    http.MethodGet,
+				Path:      "/",
+				Code:      http.StatusOK,
+				BodyMatch: `"Url":"/` + tt.scheme + `/url_rewrite/value"`,
+			})
+			assert.NoError(t, err)
 		})
 	}
 }

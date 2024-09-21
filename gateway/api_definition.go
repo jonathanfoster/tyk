@@ -572,12 +572,13 @@ func (a APIDefinitionLoader) FromDashboardService(endpoint string) ([]*APISpec, 
 var envRegex = regexp.MustCompile(`env://([^"]+)`)
 
 const (
-	prefixEnv       = "env://"
-	prefixSecrets   = "secrets://"
-	prefixConsul    = "consul://"
-	prefixVault     = "vault://"
-	prefixKeys      = "tyk-apis"
-	vaultSecretPath = "secret/data/"
+	prefixEnv            = "env://"
+	prefixSecrets        = "secrets://"
+	prefixConsul         = "consul://"
+	prefixSecretsManager = "secretsmanager://"
+	prefixVault          = "vault://"
+	prefixKeys           = "tyk-apis"
+	vaultSecretPath      = "secret/data/"
 )
 
 func (a APIDefinitionLoader) replaceSecrets(in []byte) []byte {
@@ -611,6 +612,12 @@ func (a APIDefinitionLoader) replaceSecrets(in []byte) []byte {
 		}
 	}
 
+	if strings.Contains(input, prefixSecretsManager) {
+		if err := a.replaceSecretsManagerSecrets(&input); err != nil {
+			log.WithError(err).Error("Couldn't replace Secrets Manager secrets")
+		}
+	}
+
 	if strings.Contains(input, prefixVault) {
 		if err := a.replaceVaultSecrets(&input); err != nil {
 			log.WithError(err).Error("Couldn't replace vault secrets")
@@ -633,6 +640,29 @@ func (a APIDefinitionLoader) replaceConsulSecrets(input *string) error {
 	for i := 1; i < len(pairs); i++ {
 		key := strings.TrimPrefix(pairs[i].Key, prefixKeys+"/")
 		*input = strings.Replace(*input, prefixConsul+key, string(pairs[i].Value), -1)
+	}
+
+	return nil
+}
+
+func (a APIDefinitionLoader) replaceSecretsManagerSecrets(input *string) error {
+	if err := a.Gw.setUpSecretsManager(); err != nil {
+		return err
+	}
+
+	value, err := a.Gw.secretsManagerKVStore.Get(prefixKeys)
+	if err != nil {
+		return err
+	}
+
+	jsonValue := make(map[string]interface{})
+	err = json.Unmarshal([]byte(value), &jsonValue)
+	if err != nil {
+		return fmt.Errorf("error unmarshalling secret string: %w", err)
+	}
+
+	for k, v := range jsonValue {
+		*input = strings.Replace(*input, prefixSecretsManager+k, fmt.Sprintf("%v", v), -1)
 	}
 
 	return nil

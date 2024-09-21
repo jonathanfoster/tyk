@@ -353,3 +353,23 @@ func TestPortsWhiteListDecoder(t *testing.T) {
 	assert.Contains(t, tlsWhiteList.Ports, 6000, "tls should have 6000 port")
 	assert.Contains(t, tlsWhiteList.Ports, 6015, "tls should have 6015 port")
 }
+
+func TestConfigKVSecretsManager(t *testing.T) {
+	var c Config
+
+	err := os.Setenv("TYK_GW_KV_SECRETSMANAGER_ACCESSKEYID", "AKIAIOSFODNN7EXAMPLE")
+	assert.NoError(t, err)
+
+	err = os.Setenv("TYK_GW_KV_SECRETSMANAGER_SECRETACCESSKEY", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+	assert.NoError(t, err)
+
+	err = os.Setenv("TYK_GW_KV_SECRETSMANAGER_REGION", "us-east-1")
+	assert.NoError(t, err)
+
+	err = envconfig.Process("TYK_GW", &c)
+	assert.NoError(t, err)
+
+	assert.Equal(t, "AKIAIOSFODNN7EXAMPLE", c.KV.SecretsManager.AccessKeyID)
+	assert.Equal(t, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", c.KV.SecretsManager.SecretAccessKey)
+	assert.Equal(t, "us-east-1", c.KV.SecretsManager.Region)
+}

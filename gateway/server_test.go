@@ -14,6 +14,7 @@ import (
 	"github.com/TykTechnologies/tyk/config"
 	"github.com/TykTechnologies/tyk/internal/netutil"
 	"github.com/TykTechnologies/tyk/internal/otel"
+	"github.com/TykTechnologies/tyk/storage/kv"
 	"github.com/TykTechnologies/tyk/test"
 	"github.com/TykTechnologies/tyk/user"
 )
@@ -364,6 +365,151 @@ func TestGatewayGetHostDetails(t *testing.T) {
 			for _, c := range tt.checks {
 				c(t, bl, gw)
 			}
+		})
+	}
+}
+
+func TestGatewayConfigReplaceSecrets(t *testing.T) {
+	ts := StartTest(nil)
+	defer ts.Close()
+
+	t.Setenv("TYK_SECRET_SECRET", "env::secret::value")
+	t.Setenv("TYK_SECRET_NODE_SECRET", "env::node_secret::value")
+	t.Setenv("TYK_SECRET_STORAGE_PASSWORD", "env::storage::password::value")
+	t.Setenv("TYK_SECRET_CACHE_STORAGE_PASSWORD", "env::cache_storage::password::value")
+	t.Setenv("TYK_SECRET_SECURITY_PRIVATE_CERTIFICATE_ENCODING_SECRET", "env::security::private_certificate_encoding_secret::value")
+	t.Setenv("TYK_SECRET_DB_APP_CONF_OPTION_CONNECTION_STRING", "env::db_app_conf_options::connection_string::value")
+	t.Setenv("TYK_SECRET_POLICIES_POLICY_CONNECTION_STRING", "env::policies::policy_connection_string::value")
+
+	ts.Gw.secretsManagerKVStore = kv.NewSecretsManagerWithClient(kv.NewDummySecretsManagerClient(map[string]string{
+		"tyk-config": "{" +
+			"\"secret\":\"secretsmanager::secret::value\"," +
+			"\"node_secret\":\"secretsmanager::node_secret::value\"," +
+			"\"storage_password\":\"secretsmanager::storage::password::value\"," +
+			"\"cache_storage_password\":\"secretsmanager::cache_storage::password::value\"," +
+			"\"security_private_certificate_encoding_secret\":\"secretsmanager::security::private_certificate_encoding_secret::value\"," +
+			"\"db_app_conf_options_connection_string\":\"secretsmanager::db_app_conf_options::connection_string::value\"," +
+			"\"policies_policy_connection_string\":\"secretsmanager::policies::policy_connection_string::value\"" +
+			"}",
+	}))
+
+	tests := []struct {
+		name   string
+		scheme string
+		conf   config.Config
+	}{
+		{
+			name:   "Config",
+			scheme: "secrets",
+			conf: config.Config{
+				Secrets: map[string]string{
+					"secret":                 "secrets::secret::value",
+					"node_secret":            "secrets::node_secret::value",
+					"storage_password":       "secrets::storage::password::value",
+					"cache_storage_password": "secrets::cache_storage::password::value",
+					"security_private_certificate_encoding_secret": "secrets::security::private_certificate_encoding_secret::value",
+					"db_app_conf_options_connection_string":        "secrets::db_app_conf_options::connection_string::value",
+					"policies_policy_connection_string":            "secrets::policies::policy_connection_string::value",
+				},
+				Secret:     "secrets://secret",
+				NodeSecret: "secrets://node_secret",
+				Storage: config.StorageOptionsConf{
+					Password: "secrets://storage_password",
+				},
+				CacheStorage: config.StorageOptionsConf{
+					Password: "secrets://cache_storage_password",
+				},
+				Security: config.SecurityConfig{
+					PrivateCertificateEncodingSecret: "secrets://security_private_certificate_encoding_secret",
+				},
+				UseDBAppConfigs: true,
+				DBAppConfOptions: config.DBAppConfOptionsConfig{
+					ConnectionString: "secrets://db_app_conf_options_connection_string",
+				},
+				Policies: config.PoliciesConfig{
+					PolicySource:           "service",
+					PolicyConnectionString: "secrets://policies_policy_connection_string",
+				},
+			},
+		},
+		{
+			name:   "Env",
+			scheme: "env",
+			conf: config.Config{
+				Secret:     "env://SECRET",
+				NodeSecret: "env://NODE_SECRET",
+				Storage: config.StorageOptionsConf{
+					Password: "env://STORAGE_PASSWORD",
+				},
+				CacheStorage: config.StorageOptionsConf{
+					Password: "env://CACHE_STORAGE_PASSWORD",
+				},
+				Security: config.SecurityConfig{
+					PrivateCertificateEncodingSecret: "env://SECURITY_PRIVATE_CERTIFICATE_ENCODING_SECRET",
+				},
+				UseDBAppConfigs: true,
+				DBAppConfOptions: config.DBAppConfOptionsConfig{
+					ConnectionString: "env://DB_APP_CONF_OPTION_CONNECTION_STRING",
+				},
+				Policies: config.PoliciesConfig{
+					PolicySource:           "service",
+					PolicyConnectionString: "env://POLICIES_POLICY_CONNECTION_STRING",
+				},
+			},
+		},
+		{
+			name:   "SecretsManager",
+			scheme: "secretsmanager",
+			conf: config.Config{
+				Secret:     "secretsmanager://tyk-config.secret",
+				NodeSecret: "secretsmanager://tyk-config.node_secret",
+				Storage: config.StorageOptionsConf{
+					Password: "secretsmanager://tyk-config.storage_password",
+				},
+				CacheStorage: config.StorageOptionsConf{
+					Password: "secretsmanager://tyk-config.cache_storage_password",
+				},
+				Security: config.SecurityConfig{
+					PrivateCertificateEncodingSecret: "secretsmanager://tyk-config.security_private_certificate_encoding_secret",
+				},
+				UseDBAppConfigs: true,
+				DBAppConfOptions: config.DBAppConfOptionsConfig{
+					ConnectionString: "secretsmanager://tyk-config.db_app_conf_options_connection_string",
+				},
+				Policies: config.PoliciesConfig{
+					PolicySource:           "service",
+					PolicyConnectionString: "secretsmanager://tyk-config.policies_policy_connection_string",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts.Gw.SetConfig(tt.conf)
+			ts.Gw.afterConfSetup()
+
+			actual := ts.Gw.GetConfig()
+
+			assert.Equal(t, tt.scheme+"::secret::value", actual.Secret)
+			assert.Equal(t, tt.scheme+"::node_secret::value", actual.NodeSecret)
+			assert.Equal(t, tt.scheme+"::storage::password::value", actual.Storage.Password)
+			assert.Equal(t, tt.scheme+"::cache_storage::password::value", actual.CacheStorage.Password)
+			assert.Equal(
+				t,
+				tt.scheme+"::security::private_certificate_encoding_secret::value",
+				actual.Security.PrivateCertificateEncodingSecret,
+			)
+			assert.Equal(
+				t,
+				tt.scheme+"::db_app_conf_options::connection_string::value",
+				actual.DBAppConfOptions.ConnectionString,
+			)
+			assert.Equal(
+				t,
+				tt.scheme+"::policies::policy_connection_string::value",
+				actual.Policies.PolicyConnectionString,
+			)
 		})
 	}
 }

@@ -3,11 +3,15 @@ package gateway
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TykTechnologies/tyk/apidef"
+	"github.com/TykTechnologies/tyk/config"
+	"github.com/TykTechnologies/tyk/storage/kv"
 	"github.com/TykTechnologies/tyk/test"
 )
 
@@ -300,4 +304,73 @@ func TestVersionInfo_HasEndpointResHeader(t *testing.T) {
 	v.ExtendedPaths.TransformResponseHeader[1].Disabled = false
 	v.ExtendedPaths.TransformResponseHeader[1].DeleteHeaders = []string{"a"}
 	assert.True(t, v.HasEndpointResHeader())
+}
+
+func TestHeaderInjectorReplaceSecrets(t *testing.T) {
+	ts := StartTest(func(conf *config.Config) {
+		conf.Secrets = map[string]string{
+			"global_header": "conf::global_header::value",
+			"path_header":   "conf::path_header::value",
+		}
+	})
+	defer ts.Close()
+
+	t.Setenv("TYK_SECRET_GLOBAL_HEADER", "env::global_header::value")
+	t.Setenv("TYK_SECRET_PATH_HEADER", "env::path_header::value")
+
+	ts.Gw.secretsManagerKVStore = kv.NewSecretsManagerWithClient(kv.NewDummySecretsManagerClient(map[string]string{
+		"global_header": "secretsmanager::global_header::value",
+		"path_header":   "secretsmanager::path_header::value",
+	}))
+
+	tests := []struct {
+		name   string
+		scheme string
+	}{
+		{name: "Config", scheme: "conf"},
+		{name: "Env", scheme: "env"},
+		{name: "SecretsManager", scheme: "secretsmanager"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			headerCasedScheme := strings.ToUpper(tt.scheme[:1]) + tt.scheme[1:]
+			ts.Gw.BuildAndLoadAPI(func(spec *APISpec) {
+				spec.Proxy.ListenPath = "/"
+				UpdateAPIVersion(spec, "v1", func(v *apidef.VersionInfo) {
+					v.UseExtendedPaths = true
+					v.ExtendedPaths.TransformResponseHeader = []apidef.HeaderInjectionMeta{{
+						AddHeaders: map[string]string{
+							"Path-" + headerCasedScheme: "$secret_" + tt.scheme + ".path_header",
+						},
+						Method: http.MethodGet,
+						Path:   "/path",
+					}}
+					v.GlobalResponseHeaders = map[string]string{
+						"Global-" + headerCasedScheme: "$secret_" + tt.scheme + ".global_header",
+					}
+				})
+			})
+
+			t.Run("GlobalHeaders", func(t *testing.T) {
+				res, err := ts.Run(t, test.TestCase{
+					Method: http.MethodGet,
+					Path:   "/",
+					Code:   http.StatusOK,
+				})
+				assert.NoError(t, err)
+				assert.Equal(t, tt.scheme+"::global_header::value", res.Header.Get("Global-"+headerCasedScheme))
+			})
+
+			t.Run("PathHeaders", func(t *testing.T) {
+				res, err := ts.Run(t, test.TestCase{
+					Method: http.MethodGet,
+					Path:   "/path",
+					Code:   http.StatusOK,
+				})
+				assert.NoError(t, err)
+				assert.Equal(t, tt.scheme+"::path_header::value", res.Header.Get("Path-"+headerCasedScheme))
+			})
+		})
+	}
 }

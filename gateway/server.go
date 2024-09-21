@@ -158,8 +158,9 @@ type Gateway struct {
 
 	dnsCacheManager dnscache.IDnsCacheManager
 
-	consulKVStore kv.Store
-	vaultKVStore  kv.Store
+	consulKVStore         kv.Store
+	secretsManagerKVStore kv.Store
+	vaultKVStore          kv.Store
 
 	// signatureVerifier is used to verify signatures with config.PublicKeyPath.
 	signatureVerifier atomic.Pointer[goverify.Verifier]
@@ -1477,7 +1478,6 @@ func (gw *Gateway) afterConfSetup() {
 }
 
 func (gw *Gateway) kvStore(value string) (string, error) {
-
 	if strings.HasPrefix(value, "secrets://") {
 		key := strings.TrimPrefix(value, "secrets://")
 		log.Debugf("Retrieving %s from secret store in config", key)
@@ -1520,6 +1520,17 @@ func (gw *Gateway) kvStore(value string) (string, error) {
 		return gw.vaultKVStore.Get(key)
 	}
 
+	if strings.HasPrefix(value, "secretsmanager://") {
+		key := strings.TrimPrefix(value, "secretsmanager://")
+		log.Debugf("Retrieving %s from Secrets Manager", key)
+		if err := gw.setUpSecretsManager(); err != nil {
+			log.Error("Failed to setup Secrets Manager: ", err)
+			return value, nil
+		}
+
+		return gw.secretsManagerKVStore.Get(key)
+	}
+
 	return value, nil
 }
 
@@ -1548,6 +1559,21 @@ func (gw *Gateway) setUpConsul() error {
 	gw.consulKVStore, err = kv.NewConsul(gw.GetConfig().KV.Consul)
 	if err != nil {
 		log.Debugf("an error occurred while setting up consul.. %v", err)
+	}
+
+	return err
+}
+
+func (gw *Gateway) setUpSecretsManager() error {
+	if gw.secretsManagerKVStore != nil {
+		return nil
+	}
+
+	var err error
+
+	gw.secretsManagerKVStore, err = kv.NewSecretsManagerWithConfig(gw.GetConfig().KV.SecretsManager)
+	if err != nil {
+		log.Debugf("an error occurred while setting up Secrets Manager... %v", err)
 	}
 
 	return err

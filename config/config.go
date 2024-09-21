@@ -1079,8 +1079,9 @@ type Config struct {
 	// This section enables the use of the KV capabilities to substitute configuration values.
 	// See more details https://tyk.io/docs/tyk-configuration-reference/kv-store/
 	KV struct {
-		Consul ConsulConfig `json:"consul"`
-		Vault  VaultConfig  `json:"vault"`
+		Consul         ConsulConfig         `json:"consul"`
+		SecretsManager SecretsManagerConfig `json:"secrets_manager"`
+		Vault          VaultConfig          `json:"vault"`
 	} `json:"kv"`
 
 	// Secrets are key-value pairs that can be accessed in the dashboard via "secrets://"
@@ -1239,6 +1240,18 @@ type ConsulConfig struct {
 		// Disable TLS validation
 		InsecureSkipVerify bool `json:"insecure_skip_verify"`
 	} `json:"tls_config"`
+}
+
+// SecretsManagerConfig is used to configure the AWS Secrets Manager client.
+type SecretsManagerConfig struct {
+	// AccessKeyID is the AWS access key ID.
+	AccessKeyID string `json:"access_key_id"`
+
+	// SecretAccessKey is the AWS secret access key.
+	SecretAccessKey string `json:"secret_access_key"`
+
+	// Region is the AWS region.
+	Region string `json:"region"`
 }
 
 // GetEventTriggers returns event triggers. There was a typo in the json tag.

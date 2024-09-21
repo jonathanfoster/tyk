@@ -20,19 +20,21 @@ import (
 )
 
 const (
-	metaLabel        = "$tyk_meta."
-	contextLabel     = "$tyk_context."
-	consulLabel      = "$secret_consul."
-	vaultLabel       = "$secret_vault."
-	envLabel         = "$secret_env."
-	secretsConfLabel = "$secret_conf."
-	triggerKeyPrefix = "trigger"
-	triggerKeySep    = "-"
+	metaLabel           = "$tyk_meta."
+	contextLabel        = "$tyk_context."
+	consulLabel         = "$secret_consul."
+	secretsManagerLabel = "$secret_secretsmanager."
+	vaultLabel          = "$secret_vault."
+	envLabel            = "$secret_env."
+	secretsConfLabel    = "$secret_conf."
+	triggerKeyPrefix    = "trigger"
+	triggerKeySep       = "-"
 )
 
 var dollarMatch = regexp.MustCompile(`\$\d+`)
 var contextMatch = regexp.MustCompile(`\$tyk_context.([A-Za-z0-9_\-\.]+)`)
 var consulMatch = regexp.MustCompile(`\$secret_consul.([A-Za-z0-9\/\-\.]+)`)
+var secretsManagerMatch = regexp.MustCompile(`\$secret_secretsmanager\.([A-Za-z0-9\/\-\._]+)`)
 var vaultMatch = regexp.MustCompile(`\$secret_vault.([A-Za-z0-9\/\-\.]+)`)
 var envValueMatch = regexp.MustCompile(`\$secret_env.([A-Za-z0-9_\-\.]+)`)
 var metaMatch = regexp.MustCompile(`\$tyk_meta.([A-Za-z0-9_\-\.]+)`)
@@ -211,7 +213,6 @@ func (gw *Gateway) urlRewrite(meta *apidef.URLRewriteMeta, r *http.Request) (str
 }
 
 func (gw *Gateway) replaceTykVariables(r *http.Request, in string, escape bool) string {
-
 	if strings.Contains(in, secretsConfLabel) {
 		contextData := ctxGetData(r)
 		vars := secretsConfMatch.FindAllString(in, -1)
@@ -251,12 +252,18 @@ func (gw *Gateway) replaceTykVariables(r *http.Request, in string, escape bool) 
 			in = gw.replaceVariables(in, vars, session.MetaData, metaLabel, escape)
 		}
 	}
+
+	if strings.Contains(in, secretsManagerLabel) {
+		contextData := ctxGetData(r)
+		vars := secretsManagerMatch.FindAllString(in, -1)
+		in = gw.replaceVariables(in, vars, contextData, secretsManagerLabel, escape)
+	}
+
 	//todo add config_data
 	return in
 }
 
 func (gw *Gateway) replaceVariables(in string, vars []string, vals map[string]interface{}, label string, escape bool) string {
-
 	emptyStringFn := func(key, in, val string) string {
 		in = strings.Replace(in, val, "", -1)
 		log.WithFields(logrus.Fields{
@@ -272,9 +279,7 @@ func (gw *Gateway) replaceVariables(in string, vars []string, vals map[string]in
 		key := strings.Replace(v, label, "", 1)
 
 		switch label {
-
 		case secretsConfLabel:
-
 			secrets := gw.GetConfig().Secrets
 
 			val, ok := secrets[key]
@@ -284,9 +289,7 @@ func (gw *Gateway) replaceVariables(in string, vars []string, vals map[string]in
 			}
 
 			in = strings.Replace(in, v, val, -1)
-
 		case envLabel:
-
 			val := os.Getenv(fmt.Sprintf("TYK_SECRET_%s", strings.ToUpper(key)))
 			if val == "" {
 				in = emptyStringFn(key, in, v)
@@ -294,9 +297,7 @@ func (gw *Gateway) replaceVariables(in string, vars []string, vals map[string]in
 			}
 
 			in = strings.Replace(in, v, val, -1)
-
 		case vaultLabel:
-
 			if err := gw.setUpVault(); err != nil {
 				in = emptyStringFn(key, in, v)
 				continue
@@ -309,9 +310,7 @@ func (gw *Gateway) replaceVariables(in string, vars []string, vals map[string]in
 			}
 
 			in = strings.Replace(in, v, val, -1)
-
 		case consulLabel:
-
 			if err := gw.setUpConsul(); err != nil {
 				in = emptyStringFn(key, in, v)
 				continue
@@ -324,9 +323,20 @@ func (gw *Gateway) replaceVariables(in string, vars []string, vals map[string]in
 			}
 
 			in = strings.Replace(in, v, val, -1)
+		case secretsManagerLabel:
+			if err := gw.setUpSecretsManager(); err != nil {
+				in = emptyStringFn(key, in, v)
+				continue
+			}
 
+			val, err := gw.secretsManagerKVStore.Get(key)
+			if err != nil {
+				in = strings.Replace(in, v, "", -1)
+				continue
+			}
+
+			in = strings.Replace(in, v, val, -1)
 		default:
-
 			val, ok := vals[key]
 			if ok {
 				valStr := valToStr(val)

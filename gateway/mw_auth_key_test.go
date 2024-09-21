@@ -18,6 +18,7 @@ import (
 	"github.com/TykTechnologies/tyk/config"
 	signaturevalidator "github.com/TykTechnologies/tyk/signature_validator"
 	"github.com/TykTechnologies/tyk/storage"
+	"github.com/TykTechnologies/tyk/storage/kv"
 	"github.com/TykTechnologies/tyk/test"
 	"github.com/TykTechnologies/tyk/user"
 
@@ -373,6 +374,7 @@ func TestBearerTokenAuthKeySession(t *testing.T) {
 		t.Error(recorder.Body.String())
 	}
 }
+
 func BenchmarkBearerTokenAuthKeySession(b *testing.B) {
 	ts := StartTest(nil)
 	defer ts.Close()
@@ -665,4 +667,62 @@ func TestDynamicMTLS(t *testing.T) {
 			BodyMatch: MsgCertificateExpired,
 		})
 	})
+}
+
+func TestAuthKeyReplaceSecrets(t *testing.T) {
+	ts := StartTest(func(conf *config.Config) {
+		conf.Secrets = map[string]string{
+			"auth_key_signature_secret": "conf::auth_key_signature_secret::value",
+		}
+	})
+	defer ts.Close()
+
+	t.Setenv("TYK_SECRET_AUTH_KEY_SIGNATURE_SECRET", "env::auth_key_signature_secret::value")
+
+	ts.Gw.secretsManagerKVStore = kv.NewSecretsManagerWithClient(kv.NewDummySecretsManagerClient(map[string]string{
+		"auth_key_signature_secret": "secretsmanager::auth_key_signature_secret::value",
+	}))
+
+	tests := []struct {
+		name   string
+		scheme string
+		specs  []*APISpec
+	}{
+		{name: "Config", scheme: "conf"},
+		{name: "Env", scheme: "env"},
+		{name: "SecretsManager", scheme: "secretsmanager"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts.Gw.BuildAndLoadAPI(func(spec *APISpec) {
+				spec.AuthConfigs = map[string]apidef.AuthConfig{
+					apidef.AuthTokenType: {
+						ValidateSignature: true,
+						Signature: apidef.SignatureConfig{
+							Algorithm: "MasherySHA256",
+							Header:    "Signature",
+							Secret:    "$secret_" + tt.scheme + ".auth_key_signature_secret",
+						},
+					},
+				}
+				spec.Proxy.ListenPath = "/"
+			})
+
+			key := CreateSession(ts.Gw)
+			hasher := signaturevalidator.MasherySha256Sum{}
+			signature := hasher.Hash(key, tt.scheme+"::auth_key_signature_secret::value", time.Now().Unix())
+
+			_, err := ts.Run(t, test.TestCase{
+				Method: http.MethodGet,
+				Path:   "/",
+				Headers: map[string]string{
+					"Authorization": key,
+					"Signature":     hex.EncodeToString(signature),
+				},
+				Code: http.StatusOK,
+			})
+			assert.NoError(t, err)
+		})
+	}
 }

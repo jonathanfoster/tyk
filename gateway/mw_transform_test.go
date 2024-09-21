@@ -8,6 +8,10 @@ import (
 	"testing"
 	texttemplate "text/template"
 
+	"github.com/stretchr/testify/assert"
+
+	"github.com/TykTechnologies/tyk/config"
+	"github.com/TykTechnologies/tyk/storage/kv"
 	"github.com/TykTechnologies/tyk/test"
 
 	"github.com/TykTechnologies/tyk/apidef"
@@ -388,4 +392,57 @@ func TestTransformRequestBody(t *testing.T) {
 
 		_, _ = ts.Run(t, test.TestCase{Path: "/get", Data: body, BodyNotMatch: bodyMatch, Code: http.StatusOK})
 	})
+}
+
+func TestTransformBodyReplaceSecrets(t *testing.T) {
+	ts := StartTest(func(conf *config.Config) {
+		conf.Secrets = map[string]string{
+			"body": "conf::body::value",
+		}
+	})
+	defer ts.Close()
+
+	t.Setenv("TYK_SECRET_BODY", "env::body::value")
+
+	ts.Gw.secretsManagerKVStore = kv.NewSecretsManagerWithClient(kv.NewDummySecretsManagerClient(map[string]string{
+		"body": "secretsmanager::body::value",
+	}))
+
+	tests := []struct {
+		name   string
+		scheme string
+	}{
+		{name: "Config", scheme: "conf"},
+		{name: "Env", scheme: "env"},
+		{name: "SecretsManager", scheme: "secretsmanager"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts.Gw.BuildAndLoadAPI(func(spec *APISpec) {
+				spec.Proxy.ListenPath = "/"
+				UpdateAPIVersion(spec, "v1", func(v *apidef.VersionInfo) {
+					v.UseExtendedPaths = true
+					v.ExtendedPaths.Transform = []apidef.TemplateMeta{{
+						Method: http.MethodGet,
+						Path:   "/",
+						TemplateData: apidef.TemplateData{
+							Input:          apidef.RequestJSON,
+							Mode:           apidef.UseBlob,
+							TemplateSource: base64.StdEncoding.EncodeToString([]byte("{{.secret}}")),
+						},
+					}}
+				})
+			})
+
+			_, err := ts.Run(t, test.TestCase{
+				Method:    http.MethodGet,
+				Path:      "/",
+				Data:      `{"secret":"$secret_` + tt.scheme + `.body"}`,
+				Code:      http.StatusOK,
+				BodyMatch: `"Body":"` + tt.scheme + `::body::value"`,
+			})
+			assert.NoError(t, err)
+		})
+	}
 }

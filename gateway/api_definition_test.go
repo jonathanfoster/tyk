@@ -18,10 +18,12 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	persistentmodel "github.com/TykTechnologies/storage/persistent/model"
+
 	"github.com/TykTechnologies/tyk/apidef"
 	"github.com/TykTechnologies/tyk/apidef/oas"
 	"github.com/TykTechnologies/tyk/config"
 	"github.com/TykTechnologies/tyk/rpc"
+	"github.com/TykTechnologies/tyk/storage/kv"
 	"github.com/TykTechnologies/tyk/test"
 	"github.com/TykTechnologies/tyk/user"
 )
@@ -1601,4 +1603,65 @@ func TestInternalEndpointMW_TT_11126(t *testing.T) {
 	_, _ = ts.Run(t, []test.TestCase{
 		{Path: "/headers", Code: http.StatusForbidden},
 	}...)
+}
+
+func TestAPIDefinitionReplaceSecrets(t *testing.T) {
+	ts := StartTest(func(globalConf *config.Config) {
+		globalConf.Secrets = map[string]string{
+			"jwt_signing_method": "secrets::jwt_signing_method::value",
+			"jwt_source":         "secrets::jwt_source::value",
+		}
+	})
+	defer ts.Close()
+
+	t.Setenv("JWT_SIGNING_METHOD", "env::jwt_signing_method::value")
+	t.Setenv("JWT_SOURCE", "env::jwt_source::value")
+
+	ts.Gw.secretsManagerKVStore = kv.NewSecretsManagerWithClient(kv.NewDummySecretsManagerClient(map[string]string{
+		"tyk-apis": "{" +
+			"\"jwt_signing_method\":\"secretsmanager::jwt_signing_method::value\"," +
+			"\"jwt_source\":\"secretsmanager::jwt_source::value\"" +
+			"}",
+	}))
+
+	tests := []struct {
+		name   string
+		scheme string
+		specs  []*APISpec
+	}{
+		{
+			name:   "Config",
+			scheme: "secrets",
+			specs: BuildAPI(func(spec *APISpec) {
+				spec.JWTSigningMethod = "secrets://jwt_signing_method"
+				spec.JWTSource = "secrets://jwt_source"
+			}),
+		},
+		{
+			name:   "Env",
+			scheme: "env",
+			specs: BuildAPI(func(spec *APISpec) {
+				spec.JWTSigningMethod = "env://JWT_SIGNING_METHOD"
+				spec.JWTSource = "env://JWT_SOURCE"
+			}),
+		},
+		{
+			name:   "SecretsManager",
+			scheme: "secretsmanager",
+			specs: BuildAPI(func(spec *APISpec) {
+				spec.JWTSigningMethod = "secretsmanager://jwt_signing_method"
+				spec.JWTSource = "secretsmanager://jwt_source"
+			}),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			specs := ts.Gw.LoadAPI(tt.specs...)
+			for _, spec := range specs {
+				assert.Equal(t, tt.scheme+"::jwt_signing_method::value", spec.JWTSigningMethod)
+				assert.Equal(t, tt.scheme+"::jwt_source::value", spec.JWTSource)
+			}
+		})
+	}
 }

@@ -1149,6 +1149,20 @@
             }
           }
         },
+        "secrets_manager": {
+          "type": ["object", "null"],
+          "properties": {
+            "access_key_id": {
+              "type": "string"
+            },
+            "secret_access_key": {
+              "type": "string"
+            },
+            "region": {
+              "type": "string"
+            }
+          }
+        },
         "vault": {
           "type": ["object", "null"],
           "properties": {
