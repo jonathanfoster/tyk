@@ -18,6 +18,8 @@ TEST_COUNT=1
 BENCH_REGEX=.
 BENCH_RUN=NONE
 
+DOCKER_CMD?=docker
+
 .PHONY: test
 test:
 	$(GOTEST) -run=$(TEST_REGEX) -count=$(TEST_COUNT) ./...
@@ -62,34 +64,34 @@ db-stop: redis-stop mongo-stop
 # Docker start redis
 .PHONY: redis-start
 redis-start:
-	docker run -itd --rm --name redis -p 127.0.0.1:6379:6379 redis:4.0-alpine redis-server --appendonly yes
+	$(DOCKER_CMD) run -itd --rm --name redis -p 127.0.0.1:6379:6379 redis:4.0-alpine redis-server --appendonly yes
 
 .PHONY: redis-stop
 redis-stop:
-	docker stop redis
+	$(DOCKER_CMD) stop redis
 
 .PHONY: redis-cli
 redis-cli:
-	docker exec -it redis redis-cli
+	$(DOCKER_CMD) exec -it redis redis-cli
 
 # Docker start mongo
 .PHONY: mongo-start
 mongo-start:
-	docker run -itd --rm --name mongo -p 127.0.0.1:27017:27017 mongo:3.4-jessie
+	$(DOCKER_CMD) run -itd --rm --name mongo -p 127.0.0.1:27017:27017 mongo:3.4-jessie
 
 .PHONY: mongo-stop
 mongo-stop:
-	docker stop mongo
+	$(DOCKER_CMD) stop mongo
 
 .PHONY: mongo-shell
 mongo-shell:
-	docker exec -it mongo mongo
+	$(DOCKER_CMD) exec -it mongo mongo
 
-.PHONY: docker docker-std
-
+.PHONY: docker
 docker:
-	docker build --platform ${BUILD_PLATFORM} --rm -t internal/tyk-gateway .
+	$(DOCKER_CMD) build --platform ${BUILD_PLATFORM} --rm -t internal/tyk-gateway .
 
+.PHONY: docker-std
 docker-std: build
-	docker build --platform ${BUILD_PLATFORM} --no-cache -t internal/tyk-gateway:std -f ci/Dockerfile.std .
+	$(DOCKER_CMD) build --platform ${BUILD_PLATFORM} --no-cache -t internal/tyk-gateway:std -f ci/Dockerfile.std .
 
