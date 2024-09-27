@@ -45,6 +45,7 @@ petstore.json
 *.log
 !testdata/*.mmdb
 *.pid
+*.pb.go-e
 coprocess_gen_test.go
 session_state_gen_test.go
 __pycache__/
