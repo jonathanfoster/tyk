@@ -55,6 +55,11 @@ build-linux:
 install:
 	$(GOINSTALL) -tags "$(TAGS)"
 
+.PHONY: install-deps
+install-deps:
+	go install github.com/go-task/task/v3/cmd/task@latest
+	task deps
+
 .PHONY: db-start
 db-start: redis-start mongo-start
 
